@@ -1,0 +1,222 @@
+To execute this proram
+
+mvn compile exec:java -Dexec.mainClass=com.google.cloud.bqetl.BQETLTest -Dexec.args="--numWorkers=20 --maxNumWorkers=72 --diskSizeGb=100 --workerMachineType=n1-standard-1"
+
+
+package com.google.cloud.bqetl;
+/* Import all packages */
+
+import com.google.cloud.dataflow.sdk.io.BigQueryIO.Write.Bound;
+import com.google.api.services.bigquery.model.TableRow;
+import com.google.api.services.bigquery.model.TableSchema;
+import com.google.api.services.bigquery.model.TableFieldSchema;
+import com.google.cloud.bqetl.mbdata.MusicBrainzDataObject;
+import com.google.cloud.bqetl.mbdata.MusicBrainzTransforms;
+import com.google.cloud.bqetl.mbschema.FieldSchemaListBuilder;
+import com.google.cloud.bqetl.options.BQETLOptions;
+import com.google.cloud.dataflow.sdk.Pipeline;
+import com.google.cloud.dataflow.sdk.io.BigQueryIO;
+import com.google.cloud.dataflow.sdk.io.TextIO;
+import com.google.cloud.dataflow.sdk.options.PipelineOptionsFactory;
+import com.google.cloud.dataflow.sdk.values.KV;
+import com.google.cloud.dataflow.sdk.values.PCollection;
+import com.google.cloud.dataflow.sdk.transforms.*;
+import com.google.cloud.dataflow.sdk.options.Default;
+import com.google.cloud.dataflow.sdk.options.Description;
+import com.google.cloud.dataflow.sdk.options.PipelineOptions;
+import com.google.cloud.dataflow.sdk.runners.*;
+import com.google.cloud.dataflow.sdk.options.DataflowPipelineOptions;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.ArrayList;
+
+import java.util.*;
+import java.util.regex.Pattern;
+import java.lang.*;
+import java.lang.Character;
+import java.lang.String ;
+
+public class BQETLTest {
+  private static final Logger LOG = LoggerFactory.getLogger(BQETLTest.class);
+  public static void main(String[] args) {
+    
+	DataflowPipelineOptions options = PipelineOptionsFactory.as(DataflowPipelineOptions.class);
+	
+	options.setRunner(BlockingDataflowPipelineRunner.class);
+	//options.setRunner(DataflowPipelineRunner.class);
+    options.setProject("glassy-landing-174613");
+	options.setStagingLocation("gs://my-staging-location-aug01/staging");
+	options.setTempLocation("gs://my-staging-location-aug01");
+		
+	Pipeline p = Pipeline.create(options);
+	
+	PCollection<String> lines = p.apply(TextIO.Read.named("ReadMyFile").from("gs://my-staging-location-aug01/FL_insurance_sample.txt"));
+	
+	PCollection<String> reference = p.apply(TextIO.Read.named("ReadMyFile").from("gs://my-staging-location-aug01/FL_insurance_reference_data.txt"));
+	
+	List<TableFieldSchema> expfields = new ArrayList<>();
+	expfields.add(new TableFieldSchema().setName("policyID").setType("INTEGER"));
+	expfields.add(new TableFieldSchema().setName("statecode").setType("STRING"));
+	TableSchema refschema = new TableSchema().setFields(expfields);
+	
+	List<TableFieldSchema> fields = new ArrayList<>();
+	fields.add(new TableFieldSchema().setName("policyID").setType("INTEGER"));
+	fields.add(new TableFieldSchema().setName("statecode").setType("STRING"));
+	fields.add(new TableFieldSchema().setName("county").setType("STRING"));
+	fields.add(new TableFieldSchema().setName("eq_site_limit").setType("STRING"));
+	fields.add(new TableFieldSchema().setName("hu_site_limit").setType("FLOAT"));
+	fields.add(new TableFieldSchema().setName("fl_site_limit").setType("FLOAT"));
+	fields.add(new TableFieldSchema().setName("fr_site_limit").setType("FLOAT"));
+	fields.add(new TableFieldSchema().setName("tiv_2011").setType("FLOAT"));
+	fields.add(new TableFieldSchema().setName("tiv_2012").setType("FLOAT"));
+	fields.add(new TableFieldSchema().setName("eq_site_deductible").setType("FLOAT"));
+	fields.add(new TableFieldSchema().setName("hu_site_deductible").setType("FLOAT"));
+	fields.add(new TableFieldSchema().setName("fl_site_deductible").setType("FLOAT"));
+	fields.add(new TableFieldSchema().setName("fr_site_deductible").setType("FLOAT"));
+	fields.add(new TableFieldSchema().setName("point_latitude").setType("FLOAT"));
+	fields.add(new TableFieldSchema().setName("point_longitude").setType("FLOAT"));
+	fields.add(new TableFieldSchema().setName("line").setType("STRING"));
+	fields.add(new TableFieldSchema().setName("construction").setType("STRING"));
+	fields.add(new TableFieldSchema().setName("point_granularity").setType("STRING"));
+	TableSchema schema = new TableSchema().setFields(fields);
+
+	PCollection<TableRow> row = lines.apply(ParDo.of(new StringToRowConverter()));
+	
+	PCollection<TableRow> row1 = lines.apply(ParDo.of(new StringToRowConverter1()));
+	
+	PCollection<TableRow> ref = lines.apply(ParDo.of(new StringToRowConverter2()));
+	
+	//PCollection<String> formattedResults = joinEvents(row, ref);
+	
+    row.apply(BigQueryIO.Write
+        .named("Write")
+        .to("glassy-landing-174613:musicdataset.table5")
+        .withSchema(schema)
+        .withWriteDisposition(BigQueryIO.Write.WriteDisposition.WRITE_TRUNCATE)
+        .withCreateDisposition(BigQueryIO.Write.CreateDisposition.CREATE_IF_NEEDED));
+		
+	
+	row1.apply(BigQueryIO.Write
+		.named("Write")
+		.to("glassy-landing-174613:musicdataset.exception")
+		.withSchema(schema)
+		.withWriteDisposition(BigQueryIO.Write.WriteDisposition.WRITE_TRUNCATE)
+		.withCreateDisposition(BigQueryIO.Write.CreateDisposition.CREATE_IF_NEEDED));
+			
+    p.run();
+  }
+}
+
+class StringToRowConverter extends DoFn<String, TableRow> {
+    public void processElement(ProcessContext c) {
+      //c.output(new TableRow().set("string_field", c.element()));
+	  String inputLine = c.element();
+	  String[] split = inputLine.split("\t");
+	  
+	  String Split3 = split[3];
+	  String Split1 = split[1].trim();
+	  boolean test = isAlpha(Split3);
+	  if (test == true) {
+		 split[3] = "-99999999999";  
+	  }
+	  System.out.println("Inside class split[1]: " + split[1]);
+	  //if (split[1].replaceAll("^\\s+", "").replaceAll("\\s+$", "") == "FL") {
+		TableRow output = new TableRow();
+		output.set("policyID", split[0]);
+		output.set("statecode", split[1]);
+		output.set("county", split[2]);
+		output.set("eq_site_limit", split[3]);
+		output.set("hu_site_limit", split[4]);
+		output.set("fl_site_limit", split[5]);
+		output.set("fr_site_limit", split[6]);
+		output.set("tiv_2011", split[7]);
+		output.set("tiv_2012", split[8]);
+		output.set("eq_site_deductible", split[9]);
+		output.set("hu_site_deductible", split[10]);
+		output.set("fl_site_deductible", split[11]);
+		output.set("fr_site_deductible", split[12]);
+		output.set("point_latitude", split[13]);
+		output.set("point_longitude", split[14]);
+		output.set("line", split[15]);
+		output.set("construction", split[16]);
+		output.set("point_granularity", split[17]);
+		
+		c.output(output);  
+	  //}
+	  
+    }
+	
+	
+	public boolean isAlpha(String name) {
+    char[] chars = name.toCharArray();
+
+    for (char c : chars) {
+        if(!Character.isLetter(c)) {
+            return false;
+        }
+    }
+    return true;
+}
+}
+
+
+class StringToRowConverter1 extends DoFn<String, TableRow> {
+    public void processElement(ProcessContext c) {
+      //c.output(new TableRow().set("string_field", c.element()));
+	  String inputLine = c.element();
+	  String[] split = inputLine.split("\t");
+	  
+	  String Split3 = split[3];
+	  boolean test = isAlpha(Split3);
+	  if (test == true) {
+		 TableRow output = new TableRow();
+		 output.set("policyID", split[0]);
+		 output.set("statecode", split[1]);
+		 output.set("county", split[2]);
+		 output.set("eq_site_limit", split[3]);
+		 output.set("hu_site_limit", split[4]);
+		 output.set("fl_site_limit", split[5]);
+		 output.set("fr_site_limit", split[6]);
+		 output.set("tiv_2011", split[7]);
+		 output.set("tiv_2012", split[8]);
+		 output.set("eq_site_deductible", split[9]);
+		 output.set("hu_site_deductible", split[10]);
+		 output.set("fl_site_deductible", split[11]);
+		 output.set("fr_site_deductible", split[12]);
+		 output.set("point_latitude", split[13]);
+		 output.set("point_longitude", split[14]);
+		 output.set("line", split[15]);
+		 output.set("construction", split[16]);
+		 output.set("point_granularity", split[17]);
+	  
+		 c.output(output);  
+	  }
+    }
+	
+	public boolean isAlpha(String name) {
+    char[] chars = name.toCharArray();
+
+    for (char c : chars) {
+        if(!Character.isLetter(c)) {
+            return false;
+        }
+    }
+    return true;
+	}
+}
+
+
+class StringToRowConverter2 extends DoFn<String, TableRow> {
+    public void processElement(ProcessContext c) {
+      //c.output(new TableRow().set("string_field", c.element()));
+	  String inputLine = c.element();
+	  String[] split = inputLine.split("\t");
+	  
+	  TableRow output = new TableRow();
+	  output.set("policyID", split[0]);
+	  output.set("statecode", split[1]);
+	  c.output(output);  
+	  }
+    }
